@@ -5,10 +5,10 @@
 	sumoConfiguration.xsd">
 		<input>
 			<net-file value="map.net.xml"/>
-			<route-files value="route.rou.xml"/>
+			<route-files value="result.rou.xml"/>
 		</input>
 		<time>
 			<begin value="0"/>
-			<end value="200"/>
+			<end value="50"/>
 		</time>
 </configuration>
