@@ -55,7 +55,7 @@ $ns_ node-config 	-adhocRouting $val(rp) \
 			-topoInstance $topo \
 			-agentTrace ON \
 			-routerTrace ON \
-			-macTrace OFF \
+			-macTrace ON \
 			-movementTrace ON \
 
 for {set i 0} {$i < $val(nn)} {incr i} {
