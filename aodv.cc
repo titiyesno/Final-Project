@@ -35,6 +35,12 @@ The AODV code developed by the CMU/MONARCH group was optimized and tuned by Sami
 #include <random.h>
 #include <cmu-trace.h>
 #include <stdlib.h>
+#include <string.h>
+#include <openssl/sha.h>
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
+#include <openssl/ecdsa.h>
+#include <string>
 //#include <energy-model.h>
 
 #define max(a,b)        ( (a) > (b) ? (a) : (b) )
@@ -55,10 +61,14 @@ int blacklist[200] = {0};
 double value[200][200] = {0.0};
 //int sr[200] = {0};
 
+unsigned char hash[SHA256_DIGEST_LENGTH];
+//char string[] = "hello world";
+
 /*
   TCL Hooks
 */
 
+static inline unsigned char *ucstr(const char *str) { return (unsigned char *)str; }
 
 int hdr_aodv::offset_;
 static class AODVHeaderClass : public PacketHeaderClass {
@@ -667,10 +677,10 @@ struct hdr_ip *ih = HDR_IP(p);
 struct hdr_aodv_request *rq = HDR_AODV_REQUEST(p);
 aodv_rt_entry *rt;
 //AODV_Neighbor *nb;
-  printf("src p: %d\n",rq->rq_src);
-  printf("src seq no p: %u\n",rq->rq_src_seqno);
-  printf("dst p: %d\n",rq->rq_dst);
-  printf("dst seq no p: %u\n",rq->rq_dst_seqno);
+  // printf("src p: %d\n",rq->rq_src);
+  // printf("src seq no p: %u\n",rq->rq_src_seqno);
+  // printf("dst p: %d\n",rq->rq_dst);
+  // printf("dst seq no p: %u\n",rq->rq_dst_seqno);
   //printf("nb : %d\n", nb->nb_addr);
 
   if(rq->rq_src != index){
@@ -678,7 +688,7 @@ aodv_rt_entry *rt;
       //if verification oke
       pass[(int)rq->rq_src][index] += 1;
   }
-  printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
+  //printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
   /*
    * Drop if:
    *      - I'm the source
@@ -770,7 +780,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
 
  if(rq->rq_dst == index) {
 
-  printf("dest = index\n");
+  //printf("dest = index\n");
 #ifdef DEBUG
    fprintf(stderr, "%d - %s: destination sending reply\n",
                    index, __FUNCTION__);
@@ -797,7 +807,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
  else if (rt && (rt->rt_hops != INFINITY2) && 
 	  	(rt->rt_seqno >= rq->rq_dst_seqno) ) {
 
-    printf("have fresh route\n");
+    //printf("have fresh route\n");
 
    //assert (rt->rt_flags == RTF_UP);
    assert(rq->rq_dst == rt->rt_dst);
@@ -808,7 +818,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
       st[(int)rt->rt_nexthop][index] += 1;
 
     }
-    printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
+    //printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
 
    sendReply(rq->rq_src,
              rt->rt_hops + 1,
@@ -843,7 +853,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
   * Can't reply. So forward the  Route Request
   */
  else {
-  printf("else\n");
+  //printf("else\n");
     //forward_eval[(int)rt->rt_nexthop][index] = recp[(int)rt->rt_nexthop][index]/st[(int)rt->rt_nexthop][index];
     //backward_eval[(int)rq->rq_src][index] = pass[(int)rq->rq_src][index]/recp[(int)rq->rq_src][index];
     //printf("forward_eval : %lf\n",forward_eval[(int)rt->rt_nexthop][index]);
@@ -856,21 +866,21 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
    //if (rt) rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);
    if (rt){
       
-      if((double)recp[(int)rt->rt_nexthop][index] != 0){
-        forward_eval[(int)rt->rt_nexthop][index] = (double)st[(int)rt->rt_nexthop][index]/(double)recp[(int)rt->rt_nexthop][index];
-        printf("forward_eval[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,forward_eval[(int)rt->rt_nexthop][index]);    
+      // if((double)recp[(int)rt->rt_nexthop][index] != 0){
+      //   forward_eval[(int)rt->rt_nexthop][index] = (double)st[(int)rt->rt_nexthop][index]/(double)recp[(int)rt->rt_nexthop][index];
+      //   printf("forward_eval[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,forward_eval[(int)rt->rt_nexthop][index]);    
         
-      }
-      if(recp[(int)rq->rq_src][index]!=0){
-        backward_eval[(int)rq->rq_src][index] = (double)pass[(int)rq->rq_src][index]/(double)recp[(int)rq->rq_src][index];
-        printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
-      }
+      // }
+      // if(recp[(int)rq->rq_src][index]!=0){
+      //   backward_eval[(int)rq->rq_src][index] = (double)pass[(int)rq->rq_src][index]/(double)recp[(int)rq->rq_src][index];
+      //   printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
+      // }
       
-      value[(int)rt->rt_nexthop][index] = (double) rand()/(double) RAND_MAX * forward_eval[(int)rt->rt_nexthop][index] + (double) rand()/(double) RAND_MAX * backward_eval[(int)rt->rt_nexthop][index];
-      printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
-      if(value[(int)rt->rt_nexthop][index] <= THRESHOLD){
+      // value[(int)rt->rt_nexthop][index] = (double) rand()/(double) RAND_MAX * forward_eval[(int)rt->rt_nexthop][index] + (double) rand()/(double) RAND_MAX * backward_eval[(int)rt->rt_nexthop][index];
+      // printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
+      //if(value[(int)rt->rt_nexthop][index] <= THRESHOLD){
         rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);  
-      }
+      //}
       
    }
    forward((aodv_rt_entry*) 0, p, DELAY);
@@ -1236,6 +1246,80 @@ aodv_rt_entry *rt = rtable.rt_lookup(dst);
  assert ((seqno%2) == 0);
  rq->rq_src_seqno = seqno;
  rq->rq_timestamp = CURRENT_TIME;
+
+ char string[] = "hello";
+
+ SHA256((unsigned char*)&string, strlen(string), (unsigned char*)&hash);
+ char mdString[SHA256_DIGEST_LENGTH*2+1];
+ for(int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+         sprintf(&mdString[i*2], "%02x", (unsigned int)hash[i]);
+ 
+    printf("SHA256 hash: %s\n", mdString);
+    // char test[256] = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    // test = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    int function_status = -1;
+    EC_KEY *eckey=EC_KEY_new();
+    if (NULL == eckey)
+    {
+        printf("Failed to create new EC Key\n");
+        function_status = -1;
+    }
+    else{
+      printf("EC Key created\n");
+      EC_GROUP *ecgroup= EC_GROUP_new_by_curve_name(NID_secp192k1);
+        if (NULL == ecgroup)
+        {
+            printf("Failed to create new EC Group\n");
+            function_status = -1;
+        }
+        else{
+          printf("EC Group created\n");
+          int set_group_status = EC_KEY_set_group(eckey,ecgroup);
+            const int set_group_success = 1;
+            if (set_group_success != set_group_status)
+            {
+                printf("Failed to set group for EC Key\n");
+                function_status = -1;
+            }
+            else{
+              printf("Set Group Success\n");
+              const int gen_success = 1;
+                int gen_status = EC_KEY_generate_key(eckey);
+                if (gen_success != gen_status)
+                {
+                    printf("Failed to generate EC Key\n");
+                    function_status = -1;
+                }
+                else{
+                  printf("EC Key generated\n");
+                  ECDSA_SIG *signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), eckey);
+                    if (NULL == signature)
+                    {
+                        printf("Failed to generate EC Signature\n");
+                        function_status = -1;
+                    }
+                    else{
+                      printf("EC Signature generated\n");
+                      int verify_status = ECDSA_do_verify(ucstr(mdString), strlen(mdString), signature, eckey);
+                        const int verify_success = 1;
+                        if (verify_success != verify_status)
+                        {
+                            printf("Failed to verify EC Signature\n");
+                            function_status = -1;
+                        }
+                        else
+                        {
+                            printf("Verifed EC Signature\n");
+                            function_status = 1;
+                        }
+                    }
+                }
+            }
+            EC_GROUP_free(ecgroup);
+        }
+         EC_KEY_free(eckey);
+    }
+
 
  // sr[(int)rq->rq_dst] += 1;
  // printf("sr[%d] : %d\n",(int)rq->rq_dst,sr[(int)rq->rq_dst]);
