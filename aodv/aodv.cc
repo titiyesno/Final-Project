@@ -34,10 +34,19 @@ The AODV code developed by the CMU/MONARCH group was optimized and tuned by Sami
 #include <aodv/aodv_packet.h>
 #include <random.h>
 #include <cmu-trace.h>
+#include <stdlib.h>
+#include <string.h>
+#include <openssl/sha.h>
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
+#include <openssl/ecdsa.h>
+#include <string>
 //#include <energy-model.h>
 
 #define max(a,b)        ( (a) > (b) ? (a) : (b) )
 #define CURRENT_TIME    Scheduler::instance().clock()
+
+#define _OPEN_SYS_ITOA_EXT
 
 //#define DEBUG
 //#define ERROR
@@ -46,13 +55,23 @@ The AODV code developed by the CMU/MONARCH group was optimized and tuned by Sami
 static int route_request = 0;
 #endif
 
-int counter[200] = {0};
-int pass[200] = {0};
-int val[200] = {0};
+int recp[200][200] = {0};
+int pass[200][200] = {0};
+int st[200][200] = {0};
+int sf[200][200] = {0};
+double forward_eval[200][200] = {0.0}, backward_eval[200][200] = {0.0};
+int blacklist[200] = {0};
+double value[200][200] = {0.0};
+//int sr[200] = {0};
+
+unsigned char hash[SHA256_DIGEST_LENGTH];
+//char string[] = "hello world";
+
 /*
   TCL Hooks
 */
-
+char * utoa(unsigned int n, char * buffer, int radix);
+static inline unsigned char *ucstr(const char *str) { return (unsigned char *)str; }
 
 int hdr_aodv::offset_;
 static class AODVHeaderClass : public PacketHeaderClass {
@@ -76,7 +95,6 @@ public:
 
 int
 AODV::command(int argc, const char*const* argv) {
-  //printf("AODV::command - %d\n",argc);
   if(argc == 2) {
   Tcl& tcl = Tcl::instance();
     
@@ -85,13 +103,20 @@ AODV::command(int argc, const char*const* argv) {
       return TCL_OK;
     }
     
+    if(strncasecmp(argv[1], "blackhole", 9) == 0) {
+      printf("blackhole-command\n");
+       malicious=1000;
+       printf("malicious-command : %d\n", malicious);
+       return TCL_OK;
+    }
+
     if(strncasecmp(argv[1], "start", 2) == 0) {
       btimer.handle((Event*) 0);
 
-#ifndef AODV_LINK_LAYER_DETECTION
+//#ifndef AODV_LINK_LAYER_DETECTION
       htimer.handle((Event*) 0);
       ntimer.handle((Event*) 0);
-#endif // LINK LAYER DETECTION
+//#endif // LINK LAYER DETECTION
 
       rtimer.handle((Event*) 0);
       return TCL_OK;
@@ -150,6 +175,8 @@ AODV::AODV(nsaddr_t id) : Agent(PT_AODV),
   LIST_INIT(&nbhead);
   LIST_INIT(&bihead);
 
+  malicious=999 ;
+
   logtarget = 0;
   ifqueue = 0;
 }
@@ -160,14 +187,13 @@ AODV::AODV(nsaddr_t id) : Agent(PT_AODV),
 
 void
 BroadcastTimer::handle(Event*) {
-  //printf("BroadcastTimer\n");
   agent->id_purge();
   Scheduler::instance().schedule(this, &intr, BCAST_ID_SAVE);
 }
 
 void
 HelloTimer::handle(Event*) {
-  //printf("HelloTimer\n");
+    //printf("HelloTimer\n");
    agent->sendHello();
    double interval = MinHelloInterval + 
                  ((MaxHelloInterval - MinHelloInterval) * Random::uniform());
@@ -184,7 +210,6 @@ NeighborTimer::handle(Event*) {
 
 void
 RouteCacheTimer::handle(Event*) {
-  //printf("RouteCacheTimer\n");
   agent->rt_purge();
 #define FREQUENCY 0.5 // sec
   Scheduler::instance().schedule(this, &intr, FREQUENCY);
@@ -192,7 +217,6 @@ RouteCacheTimer::handle(Event*) {
 
 void
 LocalRepairTimer::handle(Event* p)  {  // SRD: 5/4/99
-  //printf("LocalRepairTimer\n");
 aodv_rt_entry *rt;
 struct hdr_ip *ih = HDR_IP( (Packet *)p);
 
@@ -227,7 +251,6 @@ struct hdr_ip *ih = HDR_IP( (Packet *)p);
 
 void
 AODV::id_insert(nsaddr_t id, u_int32_t bid) {
-  //printf("id_insert\n");
 BroadcastID *b = new BroadcastID(id, bid);
 
  assert(b);
@@ -238,7 +261,6 @@ BroadcastID *b = new BroadcastID(id, bid);
 /* SRD */
 bool
 AODV::id_lookup(nsaddr_t id, u_int32_t bid) {
-  //printf("id_lookup\n");
 BroadcastID *b = bihead.lh_first;
  
  // Search the list for a match of source and bid
@@ -251,7 +273,6 @@ BroadcastID *b = bihead.lh_first;
 
 void
 AODV::id_purge() {
-  //printf("id_purge\n");
 BroadcastID *b = bihead.lh_first;
 BroadcastID *bn;
 double now = CURRENT_TIME;
@@ -271,7 +292,6 @@ double now = CURRENT_TIME;
 
 double
 AODV::PerHopTime(aodv_rt_entry *rt) {
-  //printf("PerHopTimer\n");
 int num_non_zero = 0, i;
 double total_latency = 0.0;
 
@@ -297,7 +317,6 @@ double total_latency = 0.0;
 
 static void
 aodv_rt_failed_callback(Packet *p, void *arg) {
-  //printf("aodv_rt_failed_callback\n");
   ((AODV*) arg)->rt_ll_failed(p);
 }
 
@@ -306,7 +325,6 @@ aodv_rt_failed_callback(Packet *p, void *arg) {
  */
 void
 AODV::rt_ll_failed(Packet *p) {
-  //printf("rt_ll_failed\n");
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
 aodv_rt_entry *rt;
@@ -360,7 +378,6 @@ while((p = ifqueue->filter(broken_nbr))) {
 
 void
 AODV::handle_link_failure(nsaddr_t id) {
-  //printf("handle_link_failure\n");
 aodv_rt_entry *rt, *rtn;
 Packet *rerr = Packet::alloc();
 struct hdr_aodv_error *re = HDR_AODV_ERROR(rerr);
@@ -399,7 +416,6 @@ struct hdr_aodv_error *re = HDR_AODV_ERROR(rerr);
 
 void
 AODV::local_rt_repair(aodv_rt_entry *rt, Packet *p) {
-  //printf("local_rt_repair\n");
 #ifdef DEBUG
   fprintf(stderr,"%s: Dst - %d\n", __FUNCTION__, rt->rt_dst); 
 #endif  
@@ -418,12 +434,11 @@ AODV::local_rt_repair(aodv_rt_entry *rt, Packet *p) {
 void
 AODV::rt_update(aodv_rt_entry *rt, u_int32_t seqnum, u_int16_t metric,
 	       	nsaddr_t nexthop, double expire_time) {
-      //printf("rt_update\n");
+
      rt->rt_seqno = seqnum;
      rt->rt_hops = metric;
      rt->rt_flags = RTF_UP;
      rt->rt_nexthop = nexthop;
-     //printf("nexthop: %d\n",rt->rt_nexthop);
      rt->rt_expire = expire_time;
 }
 
@@ -432,7 +447,7 @@ AODV::rt_down(aodv_rt_entry *rt) {
   /*
    *  Make sure that you don't "down" a route more than once.
    */
-   //printf("rt_down\n");
+
   if(rt->rt_flags == RTF_DOWN) {
     return;
   }
@@ -446,25 +461,12 @@ AODV::rt_down(aodv_rt_entry *rt) {
 
 } /* rt_down function */
 
-/* print routing table */  
-void  AODV::rt_print(nsaddr_t nodeid) {
-FILE *fp;
-fp = fopen("route_table.txt", "a");
-aodv_rt_entry *rt;
-for (rt=rtable.head();rt; rt = rt->rt_link.le_next) {
-fprintf(fp, "NODE: %i %f %i %i %i %i %i %f %d \n", nodeid, CURRENT_TIME, rt->rt_dst, rt->rt_nexthop, rt->rt_hops, rt->rt_seqno, rt->rt_expire, rt->rt_flags);
-}
-fclose(fp);
-}
-
-
 /*
   Route Handling Functions
 */
 
 void
 AODV::rt_resolve(Packet *p) {
-  //printf("rt_resolve\n");
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
 aodv_rt_entry *rt;
@@ -523,6 +525,8 @@ aodv_rt_entry *rt;
 #ifdef DEBUG
    fprintf(stderr, "%s: sending RERR...\n", __FUNCTION__);
 #endif
+   if(malicious==1000);
+else
    sendError(rerr, false);
 
    drop(p, DROP_RTR_NO_ROUTE);
@@ -532,7 +536,6 @@ aodv_rt_entry *rt;
 
 void
 AODV::rt_purge() {
-  //printf("rt_purge\n");
 aodv_rt_entry *rt, *rtn;
 double now = CURRENT_TIME;
 double delay = 0.0;
@@ -586,7 +589,6 @@ Packet *p;
 
 void
 AODV::recv(Packet *p, Handler*) {
-  //printf("recv\n");
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
 
@@ -604,7 +606,6 @@ struct hdr_ip *ih = HDR_IP(p);
  /*
   *  Must be a packet I'm originating...
   */
-  //printf("saddr: %d\n",ih->saddr());
 if((ih->saddr() == index) && (ch->num_forwards() == 0)) {
  /*
   * Add the IP Header.  
@@ -649,9 +650,8 @@ else if(ih->saddr() == index) {
 
 void
 AODV::recvAODV(Packet *p) {
-  
  struct hdr_aodv *ah = HDR_AODV(p);
- //printf("recvAODV - (%x)\n",ah->ah_type);
+
  assert(HDR_IP (p)->sport() == RT_PORT);
  assert(HDR_IP (p)->dport() == RT_PORT);
 
@@ -686,15 +686,50 @@ AODV::recvAODV(Packet *p) {
 
 void
 AODV::recvRequest(Packet *p) {
-  printf("recvRequest\n");
+  //printf("recv request at %d\n", index);
 struct hdr_ip *ih = HDR_IP(p);
 struct hdr_aodv_request *rq = HDR_AODV_REQUEST(p);
 aodv_rt_entry *rt;
-  printf("========== Header paket request ==========\n");
-  printf("src: %d\n",rq->rq_src);
-  printf("src_seqno: %u\n",rq->rq_src_seqno);
-  printf("dest: %d\n",rq->rq_dst);
-  printf("dest_seqno: %u\n",rq->rq_dst_seqno);
+//AODV_Neighbor *nb;
+//printf("hash packet : %s\n", rq->mdString);
+  
+
+   // printf("rq->rq_src (recv) : %u\n",rq->rq_src);
+   // printf("string (recv) : %s\n",string);
+
+  if(rq->rq_src != index){
+    recp[(int)rq->rq_src][index] += 1;
+      //if verification oke
+      int function_status = -1;
+    char string[SHA256_DIGEST_LENGTH];
+    strcpy(string,(char *)&rq->rq_type);
+    strcat(string,(char *)&rq->rq_hop_count);
+    strcat(string,(char *)&rq->rq_bcast_id);
+    strcat(string,(char *)&rq->rq_dst);
+    strcat(string,(char *)&rq->rq_dst_seqno);
+    strcat(string,(char *)&rq->rq_src);
+    strcat(string,(char *)&rq->rq_src_seqno);
+
+   SHA256((unsigned char*)&string, strlen(string), (unsigned char*)&hash);
+   char mdString[SHA256_DIGEST_LENGTH*2+1];
+   for(int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+           sprintf(&mdString[i*2], "%02x", (unsigned int)hash[i]);
+    //printf("mdString : %s\n", mdString);
+    int verify_status = ECDSA_do_verify(ucstr(mdString), strlen(mdString), rq->signature, rq->eckey);
+    const int verify_success = 1;
+    if (verify_success != verify_status)
+    {
+        //printf("Failed to verify EC Signature\n");
+        function_status = -1;
+    }
+    else
+    {
+        pass[(int)rq->rq_src][index]+=1;
+        //printf("Verifed EC Signature\n");
+        function_status = 1;
+    }
+  }
+  //printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
   /*
    * Drop if:
    *      - I'm the source
@@ -719,16 +754,6 @@ aodv_rt_entry *rt;
    return;
  }
 
- if(rq->rq_src != index){
-    
-    //printf("counter [%d]: %d\n",(int)rq->rq_src,counter[(int)rq->rq_src]);
-    counter[(int)rq->rq_src] += 1;
-    /*verify digital signature
-     if yes, counter++
-      pass[(int)rq->rq_src] += 1;*/
-  //printf("rq->rq_src: %d\n",rq->rq_src);
-}
-//printf("counter [%d]: %d\n",rq->rq_src,counter);
  /*
   * Cache the broadcast ID
   */
@@ -796,17 +821,18 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
 
  if(rq->rq_dst == index) {
 
+  //printf("dest = index\n");
 #ifdef DEBUG
    fprintf(stderr, "%d - %s: destination sending reply\n",
                    index, __FUNCTION__);
 #endif // DEBUG
 
+               
    // Just to be safe, I use the max. Somebody may have
    // incremented the dst seqno.
+   printf("malicious : %d\n",malicious);
    seqno = max(seqno, rq->rq_dst_seqno)+1;
-   if (seqno%2) seqno++;
-
-
+   if (seqno%2){ seqno++;
 
    sendReply(rq->rq_src,           // IP Destination
              1,                    // Hop Count
@@ -815,7 +841,22 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
              MY_ROUTE_TIMEOUT,     // Lifetime
              rq->rq_timestamp);    // timestamp
  
-   Packet::free(p);
+   Packet::free(p);}
+   else if(malicious==1000)
+  {
+    printf("blackhole-recvreq\n");
+    seqno = max(seqno, rq->rq_dst_seqno)+1;
+    if (seqno%2) seqno++;
+
+    sendReply(rq->rq_src,           // IP Destination
+                 1,                    // Hop Count
+    rq->rq_dst,
+                                 seqno,
+                                  MY_ROUTE_TIMEOUT,
+    rq->rq_timestamp);    // timestamp
+     //rt->pc_insert(rt0->rt_nexthop);
+       Packet::free(p);
+  }   
  }
 
  // I am not the destination, but I may have a fresh enough route.
@@ -823,17 +864,19 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
  else if (rt && (rt->rt_hops != INFINITY2) && 
 	  	(rt->rt_seqno >= rq->rq_dst_seqno) ) {
 
-    //implement evaluation to decide the right node as nexthop
-    // if (val[(int)rq->rq_src] > TTL_THRESHOLD && (int)rq->rq_src == (int)rt->rt_nexthop){
-    //   //record n as the next hop
-    //   rt->rt_nexthop = rq->rq_src;
-    // }
-    // //modify nexthop p = index
-    // rt->rt_nexthop = index;
-    //lasthop?
+    //printf("have fresh route\n");
+
    //assert (rt->rt_flags == RTF_UP);
    assert(rq->rq_dst == rt->rt_dst);
    //assert ((rt->rt_seqno%2) == 0);	// is the seqno even?
+    //printf("nexthop : %d\n",rt->rt_nexthop);
+    // if (rt->rt_nexthop != rq->rq_dst)
+    // {
+    //   st[(int)rt->rt_nexthop][index] += 1;
+
+    // }
+    // printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
+
    sendReply(rq->rq_src,
              rt->rt_hops + 1,
              rq->rq_dst,
@@ -844,9 +887,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
    // Insert nexthops to RREQ source and RREQ destination in the
    // precursor lists of destination and source respectively
    rt->pc_insert(rt0->rt_nexthop); // nexthop to RREQ source
-   printf("nexthop to rreq source: %d\n",rt0->rt_nexthop);
    rt0->pc_insert(rt->rt_nexthop); // nexthop to RREQ destination
-   printf("nexthop to rreq destination: %d\n",rt->rt_nexthop);
 
 #ifdef RREQ_GRAT_RREP  
 
@@ -869,11 +910,131 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
   * Can't reply. So forward the  Route Request
   */
  else {
+  //printf("else\n");
+    //forward_eval[(int)rt->rt_nexthop][index] = recp[(int)rt->rt_nexthop][index]/st[(int)rt->rt_nexthop][index];
+    //backward_eval[(int)rq->rq_src][index] = pass[(int)rq->rq_src][index]/recp[(int)rq->rq_src][index];
+    //printf("forward_eval : %lf\n",forward_eval[(int)rt->rt_nexthop][index]);
+    //printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
+    
    ih->saddr() = index;
    ih->daddr() = IP_BROADCAST;
    rq->rq_hop_count += 1;
    // Maximum sequence number seen en route
-   if (rt) rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);
+   //if (rt) rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);
+   if (rt){
+      if (rt->rt_nexthop != rq->rq_dst)
+    {
+      st[(int)rt->rt_nexthop][index] += 1;
+      printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
+
+    }
+       if((double)st[(int)rt->rt_nexthop][index] != 0){
+         forward_eval[(int)rt->rt_nexthop][index] = (double)recp[(int)rt->rt_nexthop][index]/(double)st[(int)rt->rt_nexthop][index];
+         printf("forward_eval[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,forward_eval[(int)rt->rt_nexthop][index]);    
+        
+       }
+       if(recp[(int)rq->rq_src][index]!=0){
+        printf("pass[%d][%d] : %d\n",(int)rq->rq_src,index,pass[(int)rq->rq_src][index]);
+        printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
+         backward_eval[(int)rq->rq_src][index] = (double)pass[(int)rq->rq_src][index]/(double)recp[(int)rq->rq_src][index];
+         printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
+       }
+      
+       value[(int)rt->rt_nexthop][index] = (double) rand()/(double) RAND_MAX * forward_eval[(int)rt->rt_nexthop][index] + (double) rand()/(double) RAND_MAX * backward_eval[(int)rt->rt_nexthop][index];
+       printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
+      //if(value[(int)rt->rt_nexthop][index] <= THRESHOLD){
+        rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);  
+      //}
+      
+   }
+    int function_status = -1;
+    char string[SHA256_DIGEST_LENGTH];
+    // memcpy(string,(char *)&rq->rq_src, sizeof(unsigned int));
+    strcpy(string,(char *)&rq->rq_type);
+    //printf("string1 (send) : %s\n",(char *)&rq->rq_type);
+    strcat(string,(char *)&rq->rq_hop_count);
+    //printf("string2 (send) : %s\n",(char *)&rq->rq_hop_count);
+    strcat(string,(char *)&rq->rq_bcast_id);
+    //printf("string3 (send) : %s\n",(char *)&rq->rq_bcast_id);
+    strcat(string,(char *)&rq->rq_dst);
+    //printf("string4 (send) : %s\n",(char *)&rq->rq_dst);
+    strcat(string,(char *)&rq->rq_dst_seqno);
+    //printf("string5 (send) : %s\n",(char *)&rq->rq_dst_seqno);
+    strcat(string,(char *)&rq->rq_src);
+    //printf("string6 (send) : %s\n",(char *)&rq->rq_src);
+    strcat(string,(char *)&rq->rq_src_seqno);
+
+    SHA256((unsigned char*)&string, strlen(string), (unsigned char*)&hash);
+   char mdString[SHA256_DIGEST_LENGTH*2+1];
+   for(int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+           sprintf(&mdString[i*2], "%02x", (unsigned int)hash[i]);
+    strcpy(rq->mdString,mdString);
+  
+    rq->eckey = EC_KEY_new();
+    if (NULL == rq->eckey)
+    {
+        printf("Failed to create new EC Key\n");
+        function_status = -1;
+    }
+    else{
+      printf("EC Key created\n");
+      EC_GROUP *ecgroup= EC_GROUP_new_by_curve_name(NID_secp192k1);
+        if (NULL == ecgroup)
+        {
+            printf("Failed to create new EC Group\n");
+            function_status = -1;
+        }
+        else{
+          printf("EC Group created\n");
+          int set_group_status = EC_KEY_set_group(rq->eckey,ecgroup);
+            const int set_group_success = 1;
+            if (set_group_success != set_group_status)
+            {
+                printf("Failed to set group for EC Key\n");
+                function_status = -1;
+            }
+            else{
+              printf("Set Group Success\n");
+              const int gen_success = 1;
+                int gen_status = EC_KEY_generate_key(rq->eckey);
+                if (gen_success != gen_status)
+                {
+                    printf("Failed to generate EC Key\n");
+                    function_status = -1;
+                }
+                else{
+                  printf("EC Key generated\n");
+                  // ECDSA_SIG *signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), eckey);
+                  // rq->signature = signature;
+                  rq->signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), rq->eckey);
+                    if (NULL == rq->signature)
+                    {
+                        printf("Failed to generate EC Signature\n");
+                        function_status = -1;
+                    }
+                    else{
+                      printf("EC Signature generated\n");
+                      /*int verify_status = ECDSA_do_verify(ucstr(mdString), strlen(mdString), signature, eckey);
+                        const int verify_success = 1;
+                        if (verify_success != verify_status)
+                        {
+                            printf("Failed to verify EC Signature\n");
+                            function_status = -1;
+                        }
+                        else
+                        {
+                            printf("Verifed EC Signature\n");
+                            function_status = 1;
+                        }*/
+                        function_status = 1;
+                    }
+                }
+            }
+            EC_GROUP_free(ecgroup);
+        }
+         //EC_KEY_free(eckey);
+    }
+
    forward((aodv_rt_entry*) 0, p, DELAY);
  }
 
@@ -883,7 +1044,6 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
 void
 AODV::recvReply(Packet *p) {
 //struct hdr_cmn *ch = HDR_CMN(p);
-  //printf("recvReply\n");
 struct hdr_ip *ih = HDR_IP(p);
 struct hdr_aodv_reply *rp = HDR_AODV_REPLY(p);
 aodv_rt_entry *rt;
@@ -934,7 +1094,7 @@ double delay = 0.0;
 if (ih->daddr() == index) { // If I am the original source
   // Update the route discovery latency statistics
   // rp->rp_timestamp is the time of request origination
-		rt_print(index);
+		
     rt->rt_disc_latency[(unsigned char)rt->hist_indx] = (CURRENT_TIME - rp->rp_timestamp)
                                          / (double) rp->rp_hop_count;
     // increment indx for next time
@@ -973,6 +1133,8 @@ if(ih->daddr() == index || suppress_reply) {
   */
  else {
  // Find the rt entry
+  sf[(int)rp->rp_src][index] += 1;
+  printf("sf[%d][%d] : %d\n",(int)rp->rp_src,index,sf[(int)rp->rp_src][index]);
 aodv_rt_entry *rt0 = rtable.rt_lookup(ih->daddr());
    // If the rt is up, forward
    if(rt0 && (rt0->rt_hops != INFINITY2)) {
@@ -983,7 +1145,6 @@ aodv_rt_entry *rt0 = rtable.rt_lookup(ih->daddr());
      // Insert the nexthop towards the RREQ source to 
      // the precursor list of the RREQ destination
      rt->pc_insert(rt0->rt_nexthop); // nexthop to RREQ source
-     //printf("nexthop to rreq source: %d\n",rt0->rt_nexthop);
      
    }
    else {
@@ -999,7 +1160,6 @@ aodv_rt_entry *rt0 = rtable.rt_lookup(ih->daddr());
 
 void
 AODV::recvError(Packet *p) {
-  //printf("recvError\n");
 struct hdr_ip *ih = HDR_IP(p);
 struct hdr_aodv_error *re = HDR_AODV_ERROR(p);
 aodv_rt_entry *rt;
@@ -1062,7 +1222,6 @@ struct hdr_aodv_error *nre = HDR_AODV_ERROR(rerr);
 
 void
 AODV::forward(aodv_rt_entry *rt, Packet *p, double delay) {
-  //printf("forward\n");
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
 
@@ -1087,7 +1246,6 @@ struct hdr_ip *ih = HDR_IP(p);
    assert(rt->rt_flags == RTF_UP);
    rt->rt_expire = CURRENT_TIME + ACTIVE_ROUTE_TIMEOUT;
    ch->next_hop_ = rt->rt_nexthop;
-   //printf("nexthop: %d\n",ch->next_hop_);
    ch->addr_type() = NS_AF_INET;
    ch->direction() = hdr_cmn::DOWN;       //important: change the packet's direction
  }
@@ -1126,7 +1284,6 @@ if (ih->daddr() == (nsaddr_t) IP_BROADCAST) {
 
 void
 AODV::sendRequest(nsaddr_t dst) {
-  printf("sendRequest\n");
 // Allocate a RREQ packet 
 Packet *p = Packet::alloc();
 struct hdr_cmn *ch = HDR_CMN(p);
@@ -1140,8 +1297,7 @@ aodv_rt_entry *rt = rtable.rt_lookup(dst);
   *  Rate limit sending of Route Requests. We are very conservative
   *  about sending out route requests. 
   */
-  // printf("rt_flags: %u\n", rt->rt_flags);
-  // printf("rt_hops: %u\n", rt->rt_hops);
+
  if (rt->rt_flags == RTF_UP) {
    assert(rt->rt_hops != INFINITY2);
    Packet::free((Packet *)p);
@@ -1156,7 +1312,7 @@ aodv_rt_entry *rt = rtable.rt_lookup(dst);
  // rt_req_cnt is the no. of times we did network-wide broadcast
  // RREQ_RETRIES is the maximum number we will allow before 
  // going to a long timeout.
- // printf("rt_req_cnt: %u\n", rt->rt_req_cnt);
+
  if (rt->rt_req_cnt > RREQ_RETRIES) {
    rt->rt_req_timeout = CURRENT_TIME + MAX_RREQ_TIMEOUT;
    rt->rt_req_cnt = 0;
@@ -1175,24 +1331,19 @@ aodv_rt_entry *rt = rtable.rt_lookup(dst);
 
  // Determine the TTL to be used this time. 
  // Dynamic TTL evaluation - SRD
-   //printf("rt_last_hop_count: %d\n", rt->rt_last_hop_count);
-   //printf("rt_req_last_ttl: %d\n", rt->rt_req_last_ttl);
+
  rt->rt_req_last_ttl = max(rt->rt_req_last_ttl,rt->rt_last_hop_count);
-    // printf("ttl: %d\n",max(rt->rt_req_last_ttl,rt->rt_last_hop_count));
+
  if (0 == rt->rt_req_last_ttl) {
-    // printf("first time query broadcast");
  // first time query broadcast
    ih->ttl_ = TTL_START;
  }
  else {
  // Expanding ring search.
-   if (rt->rt_req_last_ttl < TTL_THRESHOLD){
-      // printf("expandind ring search\n");
+   if (rt->rt_req_last_ttl < TTL_THRESHOLD)
      ih->ttl_ = rt->rt_req_last_ttl + TTL_INCREMENT;
-   }
    else {
    // network-wide broadcast
-    // printf("network-wide broadcast\n");
      ih->ttl_ = NETWORK_DIAMETER;
      rt->rt_req_cnt += 1;
    }
@@ -1216,7 +1367,6 @@ aodv_rt_entry *rt = rtable.rt_lookup(dst);
    rt->rt_req_timeout = CURRENT_TIME + MAX_RREQ_TIMEOUT;
  rt->rt_expire = 0;
 
-printf("%2d -> %d\n",index,rt->rt_dst);
 #ifdef DEBUG
  fprintf(stderr, "(%2d) - %2d sending Route Request, dst: %d, tout %f ms\n",
 	         ++route_request, 
@@ -1238,26 +1388,92 @@ printf("%2d -> %d\n",index,rt->rt_dst);
  ih->daddr() = IP_BROADCAST;
  ih->sport() = RT_PORT;
  ih->dport() = RT_PORT;
- printf("===================== paket request ============\n");
- // Fill up some more fields. ini tempat paketnya
+
+ // Fill up some more fields. 
  rq->rq_type = AODVTYPE_RREQ;
- //printf("type: %u\n",rq->rq_type);
  rq->rq_hop_count = 1;
- //printf("hop count: %u\n",rq->rq_hop_count);
  rq->rq_bcast_id = bid++;
- //printf("bcast id: %u\n",rq->rq_bcast_id);
  rq->rq_dst = dst;
- printf("dst: %d\n",rq->rq_dst);
  rq->rq_dst_seqno = (rt ? rt->rt_seqno : 0);
- printf("dst_seqno: %u\n", rq->rq_dst_seqno);
  rq->rq_src = index;
- printf("src: %d\n",rq->rq_src);
  seqno += 2;
  assert ((seqno%2) == 0);
  rq->rq_src_seqno = seqno;
- printf("src_seqno: %u\n", rq->rq_src_seqno);
  rq->rq_timestamp = CURRENT_TIME;
- printf("==============================================\n");
+
+  char string[SHA256_DIGEST_LENGTH];
+  strcpy(string,(char *)&rq->rq_type);
+  strcat(string,(char *)&rq->rq_hop_count);
+  strcat(string,(char *)&rq->rq_bcast_id);
+  strcat(string,(char *)&rq->rq_dst);
+  strcat(string,(char *)&rq->rq_dst_seqno);
+  strcat(string,(char *)&rq->rq_src);
+  strcat(string,(char *)&rq->rq_src_seqno);
+
+ SHA256((unsigned char*)&string, strlen(string), (unsigned char*)&hash);
+ char mdString[SHA256_DIGEST_LENGTH*2+1];
+ for(int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+         sprintf(&mdString[i*2], "%02x", (unsigned int)hash[i]);
+ 
+    //printf("SHA256 hash: %s\n", mdString);
+    strcpy(rq->mdString,mdString);
+    int function_status = -1;
+    // EC_KEY *eckey=EC_KEY_new();
+    rq->eckey = EC_KEY_new();
+    if (NULL == rq->eckey)
+    {
+        //printf("Failed to create new EC Key\n");
+        function_status = -1;
+    }
+    else{
+      //printf("EC Key created\n");
+      EC_GROUP *ecgroup= EC_GROUP_new_by_curve_name(NID_secp192k1);
+        if (NULL == ecgroup)
+        {
+            //printf("Failed to create new EC Group\n");
+            function_status = -1;
+        }
+        else{
+          //printf("EC Group created\n");
+          int set_group_status = EC_KEY_set_group(rq->eckey,ecgroup);
+            const int set_group_success = 1;
+            if (set_group_success != set_group_status)
+            {
+                //printf("Failed to set group for EC Key\n");
+                function_status = -1;
+            }
+            else{
+              //printf("Set Group Success\n");
+              const int gen_success = 1;
+                int gen_status = EC_KEY_generate_key(rq->eckey);
+                if (gen_success != gen_status)
+                {
+                    //printf("Failed to generate EC Key\n");
+                    function_status = -1;
+                }
+                else{
+                  //printf("EC Key generated\n");
+                  // ECDSA_SIG *signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), eckey);
+                  rq->signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), rq->eckey);
+                    if (NULL == rq->signature)
+                    {
+                        //printf("Failed to generate EC Signature\n");
+                        function_status = -1;
+                    }
+                    else{
+                      //printf("EC Signature generated\n");
+                        function_status = 1;
+                    }
+                }
+            }
+            EC_GROUP_free(ecgroup);
+        }
+         //EC_KEY_free(eckey);
+    }
+
+
+ // sr[(int)rq->rq_dst] += 1;
+ // printf("sr[%d] : %d\n",(int)rq->rq_dst,sr[(int)rq->rq_dst]);
 
  Scheduler::instance().schedule(target_, p, 0.);
 
@@ -1266,10 +1482,7 @@ printf("%2d -> %d\n",index,rt->rt_dst);
 void
 AODV::sendReply(nsaddr_t ipdst, u_int32_t hop_count, nsaddr_t rpdst,
                 u_int32_t rpseq, u_int32_t lifetime, double timestamp) {
-//printf("sendReply\n");
-//printf("index : %d\n", index);
-//printf("rpdst: %d\n",rpdst);
-//printf("ipdst: %d\n",ipdst);
+printf("send reply\n");
 Packet *p = Packet::alloc();
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
@@ -1281,23 +1494,14 @@ fprintf(stderr, "sending Reply from %d at %.2f\n", index, Scheduler::instance().
 #endif // DEBUG
  assert(rt);
 
- //printf("==================== paket reply =====================\n");
  rp->rp_type = AODVTYPE_RREP;
  //rp->rp_flags = 0x00;
- //printf("type: %u\n",rp->rp_type);
  rp->rp_hop_count = hop_count;
- //printf("hop count: %u\n",rp->rp_hop_count);
  rp->rp_dst = rpdst;
- //printf("dst: %d\n",rp->rp_dst);
  rp->rp_dst_seqno = rpseq;
- //printf("dst_seqno: %u\n",rp->rp_dst_seqno);
  rp->rp_src = index;
- //printf("src: %d\n",rp->rp_src);
  rp->rp_lifetime = lifetime;
- //printf("lifestamp: %lf\n",rp->rp_lifetime);
  rp->rp_timestamp = timestamp;
- //printf("timestamp: %lf\n",rp->rp_timestamp);
- //printf("=======================================================\n");
    
  // ch->uid() = 0;
  ch->ptype() = PT_AODV;
@@ -1306,7 +1510,6 @@ fprintf(stderr, "sending Reply from %d at %.2f\n", index, Scheduler::instance().
  ch->error() = 0;
  ch->addr_type() = NS_AF_INET;
  ch->next_hop_ = rt->rt_nexthop;
- printf("nexthop: %d\n",rt->rt_nexthop);
  ch->prev_hop_ = index;          // AODV hack
  ch->direction() = hdr_cmn::DOWN;
 
@@ -1322,7 +1525,6 @@ fprintf(stderr, "sending Reply from %d at %.2f\n", index, Scheduler::instance().
 
 void
 AODV::sendError(Packet *p, bool jitter) {
-  //printf("sendError\n");
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
 struct hdr_aodv_error *re = HDR_AODV_ERROR(p);
@@ -1409,6 +1611,7 @@ struct hdr_aodv_reply *rp = HDR_AODV_REPLY(p);
 AODV_Neighbor *nb;
 
  nb = nb_lookup(rp->rp_dst);
+ //printf("nb : %d\n",nb->nb_addr);
  if(nb == 0) {
    nb_insert(rp->rp_dst);
  }
@@ -1436,7 +1639,6 @@ AODV_Neighbor *nb = new AODV_Neighbor(id);
 
 AODV_Neighbor*
 AODV::nb_lookup(nsaddr_t id) {
-  //printf("nb_lookup\n");
 AODV_Neighbor *nb = nbhead.lh_first;
 
  for(; nb; nb = nb->nb_link.le_next) {
@@ -1452,7 +1654,6 @@ AODV_Neighbor *nb = nbhead.lh_first;
  */
 void
 AODV::nb_delete(nsaddr_t id) {
-  //printf("nb_delete\n");
 AODV_Neighbor *nb = nbhead.lh_first;
 
  log_link_del(id);
@@ -1478,7 +1679,6 @@ AODV_Neighbor *nb = nbhead.lh_first;
  */
 void
 AODV::nb_purge() {
-  //printf("nb_purge\n");
 AODV_Neighbor *nb = nbhead.lh_first;
 AODV_Neighbor *nbn;
 double now = CURRENT_TIME;

@@ -88,7 +88,9 @@ class AODV;
 /* Various constants used for the expanding ring search */
 #define TTL_START     5
 #define TTL_THRESHOLD 7
-#define TTL_INCREMENT 2 
+#define TTL_INCREMENT 2
+
+#define THRESHOLD 0.7 
 
 // This should be somewhat related to arp timeout
 #define NODE_TRAVERSAL_TIME     0.03             // 30 ms
@@ -221,7 +223,6 @@ class AODV: public Agent {
 		     	  	u_int16_t metric, nsaddr_t nexthop,
 		      		double expire_time);
         void            rt_down(aodv_rt_entry *rt);
-        void rt_print(nsaddr_t nodeid);
         void            local_rt_repair(aodv_rt_entry *rt, Packet *p);
  public:
         void            rt_ll_failed(Packet *p);
@@ -275,6 +276,7 @@ class AODV: public Agent {
 	
 	double 		PerHopTime(aodv_rt_entry *rt);
 
+        nsaddr_t malicious;
 
         nsaddr_t        index;                  // IP Address of this node
         u_int32_t       seqno;                  // Sequence Number
@@ -326,6 +328,5 @@ class AODV: public Agent {
 	PortClassifier *dmux_;
 
 };
-
 
 #endif /* __aodv_h__ */
