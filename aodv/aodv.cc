@@ -830,7 +830,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
                
    // Just to be safe, I use the max. Somebody may have
    // incremented the dst seqno.
-   printf("malicious : %d\n",malicious);
+   //printf("malicious : %d\n",malicious);
    seqno = max(seqno, rq->rq_dst_seqno)+1;
    if (seqno%2){ seqno++;
 
@@ -925,23 +925,23 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
       if (rt->rt_nexthop != rq->rq_dst)
     {
       st[(int)rt->rt_nexthop][index] += 1;
-      printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
+      //printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
 
     }
        if((double)st[(int)rt->rt_nexthop][index] != 0){
-         forward_eval[(int)rt->rt_nexthop][index] = (double)recp[(int)rt->rt_nexthop][index]/(double)st[(int)rt->rt_nexthop][index];
+         forward_eval[(int)rt->rt_nexthop][index] = (double)sf[(int)rt->rt_nexthop][index]/(double)st[(int)rt->rt_nexthop][index];
          printf("forward_eval[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,forward_eval[(int)rt->rt_nexthop][index]);    
         
        }
        if(recp[(int)rq->rq_src][index]!=0){
-        printf("pass[%d][%d] : %d\n",(int)rq->rq_src,index,pass[(int)rq->rq_src][index]);
-        printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
+        //printf("pass[%d][%d] : %d\n",(int)rq->rq_src,index,pass[(int)rq->rq_src][index]);
+        //printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
          backward_eval[(int)rq->rq_src][index] = (double)pass[(int)rq->rq_src][index]/(double)recp[(int)rq->rq_src][index];
-         printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
+         //printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
        }
       
        value[(int)rt->rt_nexthop][index] = (double) rand()/(double) RAND_MAX * forward_eval[(int)rt->rt_nexthop][index] + (double) rand()/(double) RAND_MAX * backward_eval[(int)rt->rt_nexthop][index];
-       printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
+       //printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
       //if(value[(int)rt->rt_nexthop][index] <= THRESHOLD){
         rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);  
       //}
@@ -973,47 +973,47 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
     rq->eckey = EC_KEY_new();
     if (NULL == rq->eckey)
     {
-        printf("Failed to create new EC Key\n");
+        //printf("Failed to create new EC Key\n");
         function_status = -1;
     }
     else{
-      printf("EC Key created\n");
+      //printf("EC Key created\n");
       EC_GROUP *ecgroup= EC_GROUP_new_by_curve_name(NID_secp192k1);
         if (NULL == ecgroup)
         {
-            printf("Failed to create new EC Group\n");
+            //printf("Failed to create new EC Group\n");
             function_status = -1;
         }
         else{
-          printf("EC Group created\n");
+          //printf("EC Group created\n");
           int set_group_status = EC_KEY_set_group(rq->eckey,ecgroup);
             const int set_group_success = 1;
             if (set_group_success != set_group_status)
             {
-                printf("Failed to set group for EC Key\n");
+                //printf("Failed to set group for EC Key\n");
                 function_status = -1;
             }
             else{
-              printf("Set Group Success\n");
+              //printf("Set Group Success\n");
               const int gen_success = 1;
                 int gen_status = EC_KEY_generate_key(rq->eckey);
                 if (gen_success != gen_status)
                 {
-                    printf("Failed to generate EC Key\n");
+                    //printf("Failed to generate EC Key\n");
                     function_status = -1;
                 }
                 else{
-                  printf("EC Key generated\n");
+                  //printf("EC Key generated\n");
                   // ECDSA_SIG *signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), eckey);
                   // rq->signature = signature;
                   rq->signature = ECDSA_do_sign(ucstr(mdString), strlen(mdString), rq->eckey);
                     if (NULL == rq->signature)
                     {
-                        printf("Failed to generate EC Signature\n");
+                        //printf("Failed to generate EC Signature\n");
                         function_status = -1;
                     }
                     else{
-                      printf("EC Signature generated\n");
+                      //printf("EC Signature generated\n");
                       /*int verify_status = ECDSA_do_verify(ucstr(mdString), strlen(mdString), signature, eckey);
                         const int verify_success = 1;
                         if (verify_success != verify_status)
@@ -1134,7 +1134,7 @@ if(ih->daddr() == index || suppress_reply) {
  else {
  // Find the rt entry
   sf[(int)rp->rp_src][index] += 1;
-  printf("sf[%d][%d] : %d\n",(int)rp->rp_src,index,sf[(int)rp->rp_src][index]);
+  //printf("sf[%d][%d] : %d\n",(int)rp->rp_src,index,sf[(int)rp->rp_src][index]);
 aodv_rt_entry *rt0 = rtable.rt_lookup(ih->daddr());
    // If the rt is up, forward
    if(rt0 && (rt0->rt_hops != INFINITY2)) {
@@ -1482,7 +1482,7 @@ aodv_rt_entry *rt = rtable.rt_lookup(dst);
 void
 AODV::sendReply(nsaddr_t ipdst, u_int32_t hop_count, nsaddr_t rpdst,
                 u_int32_t rpseq, u_int32_t lifetime, double timestamp) {
-printf("send reply\n");
+//printf("send reply\n");
 Packet *p = Packet::alloc();
 struct hdr_cmn *ch = HDR_CMN(p);
 struct hdr_ip *ih = HDR_IP(p);
