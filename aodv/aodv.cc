@@ -113,10 +113,10 @@ AODV::command(int argc, const char*const* argv) {
     if(strncasecmp(argv[1], "start", 2) == 0) {
       btimer.handle((Event*) 0);
 
-//#ifndef AODV_LINK_LAYER_DETECTION
+#ifndef AODV_LINK_LAYER_DETECTION
       htimer.handle((Event*) 0);
       ntimer.handle((Event*) 0);
-//#endif // LINK LAYER DETECTION
+#endif // LINK LAYER DETECTION
 
       rtimer.handle((Event*) 0);
       return TCL_OK;
@@ -690,16 +690,11 @@ AODV::recvRequest(Packet *p) {
 struct hdr_ip *ih = HDR_IP(p);
 struct hdr_aodv_request *rq = HDR_AODV_REQUEST(p);
 aodv_rt_entry *rt;
-//AODV_Neighbor *nb;
-//printf("hash packet : %s\n", rq->mdString);
-  
 
-   // printf("rq->rq_src (recv) : %u\n",rq->rq_src);
-   // printf("string (recv) : %s\n",string);
-
+  /*part I line 1*/
   if(rq->rq_src != index){
+    /*part I line 2*/
     recp[(int)rq->rq_src][index] += 1;
-      //if verification oke
       int function_status = -1;
     char string[SHA256_DIGEST_LENGTH];
     strcpy(string,(char *)&rq->rq_type);
@@ -717,19 +712,20 @@ aodv_rt_entry *rt;
     //printf("mdString : %s\n", mdString);
     int verify_status = ECDSA_do_verify(ucstr(mdString), strlen(mdString), rq->signature, rq->eckey);
     const int verify_success = 1;
+    /*part I line 3*/
     if (verify_success != verify_status)
     {
-        //printf("Failed to verify EC Signature\n");
         function_status = -1;
+        /* Part I line 5 */
+        Packet::free(p);
     }
     else
     {
+        /* part I line 4*/
         pass[(int)rq->rq_src][index]+=1;
-        //printf("Verifed EC Signature\n");
         function_status = 1;
     }
   }
-  //printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
   /*
    * Drop if:
    *      - I'm the source
@@ -819,9 +815,8 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
 
  // First check if I am the destination ..
 
+ /* Part II line 7 - 8 */
  if(rq->rq_dst == index) {
-
-  //printf("dest = index\n");
 #ifdef DEBUG
    fprintf(stderr, "%d - %s: destination sending reply\n",
                    index, __FUNCTION__);
@@ -860,7 +855,7 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
  }
 
  // I am not the destination, but I may have a fresh enough route.
-
+ /* Part II line 9 - 12 */
  else if (rt && (rt->rt_hops != INFINITY2) && 
 	  	(rt->rt_seqno >= rq->rq_dst_seqno) ) {
 
@@ -869,13 +864,6 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
    //assert (rt->rt_flags == RTF_UP);
    assert(rq->rq_dst == rt->rt_dst);
    //assert ((rt->rt_seqno%2) == 0);	// is the seqno even?
-    //printf("nexthop : %d\n",rt->rt_nexthop);
-    // if (rt->rt_nexthop != rq->rq_dst)
-    // {
-    //   st[(int)rt->rt_nexthop][index] += 1;
-
-    // }
-    // printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
 
    sendReply(rq->rq_src,
              rt->rt_hops + 1,
@@ -886,8 +874,14 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
              rq->rq_timestamp);
    // Insert nexthops to RREQ source and RREQ destination in the
    // precursor lists of destination and source respectively
+
+   /* Part II line 11 */
+
+   /* Part II line 12 */
    rt->pc_insert(rt0->rt_nexthop); // nexthop to RREQ source
    rt0->pc_insert(rt->rt_nexthop); // nexthop to RREQ destination
+
+   /* Part II line 14 */
 
 #ifdef RREQ_GRAT_RREP  
 
@@ -905,47 +899,35 @@ rt_update(rt0, rq->rq_src_seqno, rq->rq_hop_count, ih->saddr(),
 // DONE: Included gratuitous replies to be sent as per IETF aodv draft specification. As of now, G flag has not been dynamically used and is always set or reset in aodv-packet.h --- Anant Utgikar, 09/16/02.
 
 	Packet::free(p);
+      
  }
  /*
   * Can't reply. So forward the  Route Request
   */
+
  else {
-  //printf("else\n");
-    //forward_eval[(int)rt->rt_nexthop][index] = recp[(int)rt->rt_nexthop][index]/st[(int)rt->rt_nexthop][index];
-    //backward_eval[(int)rq->rq_src][index] = pass[(int)rq->rq_src][index]/recp[(int)rq->rq_src][index];
-    //printf("forward_eval : %lf\n",forward_eval[(int)rt->rt_nexthop][index]);
-    //printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
-    
+
+
    ih->saddr() = index;
    ih->daddr() = IP_BROADCAST;
    rq->rq_hop_count += 1;
    // Maximum sequence number seen en route
    //if (rt) rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);
-   if (rt){
-      if (rt->rt_nexthop != rq->rq_dst)
-    {
-      st[(int)rt->rt_nexthop][index] += 1;
-      //printf("st[%d][%d] : %d\n",(int)rt->rt_nexthop,index,st[(int)rt->rt_nexthop][index]);
-
-    }
-       if((double)st[(int)rt->rt_nexthop][index] != 0){
+   /* Part III line 15 */
+   if (rt && rt->rt_nexthop != rq->rq_dst){
+        st[(int)rt->rt_nexthop][index] += 1;
+       if(st[(int)rt->rt_nexthop][index] != 0 && sf[(int)rt->rt_nexthop][index] != 0){
          forward_eval[(int)rt->rt_nexthop][index] = (double)sf[(int)rt->rt_nexthop][index]/(double)st[(int)rt->rt_nexthop][index];
-         printf("forward_eval[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,forward_eval[(int)rt->rt_nexthop][index]);    
+         //printf("forward_eval[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,forward_eval[(int)rt->rt_nexthop][index]);    
         
        }
        if(recp[(int)rq->rq_src][index]!=0){
-        //printf("pass[%d][%d] : %d\n",(int)rq->rq_src,index,pass[(int)rq->rq_src][index]);
-        //printf("recp[%d][%d] : %d\n",(int)rq->rq_src,index,recp[(int)rq->rq_src][index]);
          backward_eval[(int)rq->rq_src][index] = (double)pass[(int)rq->rq_src][index]/(double)recp[(int)rq->rq_src][index];
-         //printf("backward_eval[%d][%d] : %lf\n",(int)rq->rq_src,index,backward_eval[(int)rq->rq_src][index]);
        }
       
        value[(int)rt->rt_nexthop][index] = (double) rand()/(double) RAND_MAX * forward_eval[(int)rt->rt_nexthop][index] + (double) rand()/(double) RAND_MAX * backward_eval[(int)rt->rt_nexthop][index];
-       //printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
-      //if(value[(int)rt->rt_nexthop][index] <= THRESHOLD){
+       printf("value[%d][%d] : %lf\n",(int)rt->rt_nexthop,index,value[(int)rt->rt_nexthop][index]);
         rq->rq_dst_seqno = max(rt->rt_seqno, rq->rq_dst_seqno);  
-      //}
-      
    }
     int function_status = -1;
     char string[SHA256_DIGEST_LENGTH];
@@ -1127,6 +1109,7 @@ if (ih->daddr() == index) { // If I am the original source
 
 if(ih->daddr() == index || suppress_reply) {
    Packet::free(p);
+   sf[(int)rp->rp_src][index] += 1;
  }
  /*
   * Otherwise, forward the Route Reply.
